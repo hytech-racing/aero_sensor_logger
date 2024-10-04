@@ -4,13 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
     utils.url = "github:numtide/flake-utils";
-    mcap-protobuf.url = "github:RCMast3r/mcap-protobuf-support-flake";
     flake-utils.url = "github:numtide/flake-utils";
-    mcap.url = "github:RCMast3r/py_mcap_nix";
     nix-proto = { url = "github:notalltim/nix-proto"; };
   };
 
-  outputs = { self, nixpkgs, utils, mcap-protobuf, mcap, nix-proto, flake-utils, ... }@inputs:
+  outputs = { self, nixpkgs, utils, nix-proto, flake-utils, ... }@inputs:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-darwin" "x86_64-darwin" "aarch64-linux" ] (system:
     let
       makePackageSet = pkgs: {
@@ -55,7 +53,7 @@
         shellHook =
           let icon = "f121";
           in ''
-            echo -e "PYTHONPATH=$PYTHONPATH" > .env
+            echo -e "CPPPATH=$CPPPATH" > .env
             export PS1="$(echo -e '\u${icon}') {\[$(tput sgr0)\]\[\033[38;5;228m\]\w\[$(tput sgr0)\]\[\033[38;5;15m\]} (${name}) \\$ \[$(tput sgr0)\]"
           '';
       };
