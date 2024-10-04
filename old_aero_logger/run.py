@@ -22,17 +22,17 @@ from aero_sensor_protos_np_proto_py.aero_sensor import aero_sensor_pb2
 
 start_new_log = False
 stop_current_log = False
-def log_sensor_data(mcap_logger, data, port_name):
-    msg = aero_sensor_pb2.aero_data()
-    msg.readings_pa.extend(data)
-    sensor_name = port_name.split("/")[-1]
+# def log_sensor_data(mcap_logger, data, port_name):
+#     msg = aero_sensor_pb2.aero_data()
+#     msg.readings_pa.extend(data)
+#     sensor_name = port_name.split("/")[-1]
     
-    mcap_logger.write_message(
-        topic=msg.DESCRIPTOR.name + "_" + sensor_name + "_data",
-        message=msg,
-        log_time=int(time.time_ns()),
-        publish_time=int(time.time_ns()),
-    )
+#     mcap_logger.write_message(
+#         topic=msg.DESCRIPTOR.name + "_" + sensor_name + "_data",
+#         message=msg,
+#         log_time=int(time.time_ns()),
+#         publish_time=int(time.time_ns()),
+#     )
 
 async def append_sensor_data(queue, data, port_name):
     await queue.put((data, port_name))
@@ -45,24 +45,24 @@ def process_buffer(buffer):
     floats = struct.unpack("<8f", buffer[:32])
     return floats
 
-def open_new_writer():
-    path_to_mcap = "."
-    if os.path.exists("/etc/nixos"):
-        path_to_mcap = "/home/nixos/aero_sensor_recordings"
-    now = datetime.now()
-    date_time_filename = now.strftime("%m_%d_%Y_%H_%M_%S" + ".mcap")
+# def open_new_writer():
+#     path_to_mcap = "."
+#     if os.path.exists("/etc/nixos"):
+#         path_to_mcap = "/home/nixos/aero_sensor_recordings"
+#     now = datetime.now()
+#     date_time_filename = now.strftime("%m_%d_%Y_%H_%M_%S" + ".mcap")
     
-    date_time_mcap_path = os.path.join(path_to_mcap, date_time_filename)
-    writing_file = open(date_time_mcap_path, "wb")
-    return Writer(writing_file), writing_file
+#     date_time_mcap_path = os.path.join(path_to_mcap, date_time_filename)
+#     writing_file = open(date_time_mcap_path, "wb")
+#     return Writer(writing_file), writing_file
 
-def cleanup():
-    global mcap_writer, writing_file
-    if mcap_writer:
-        print("Finalizing MCAP writer...")
-        mcap_writer.finish()
-    if writing_file:
-        writing_file.close()
+# def cleanup():
+#     global mcap_writer, writing_file
+#     if mcap_writer:
+#         print("Finalizing MCAP writer...")
+#         mcap_writer.finish()
+#     if writing_file:
+#         writing_file.close()
 
 def handle_signal(signal, frame):
     print(f"Received signal {signal}, running cleanup...")
@@ -175,24 +175,24 @@ async def init_http_server():
     ])
     return app
 
-async def worker(queue):
-    global start_new_log, stop_current_log
-    mcap_logger, writing_file = open_new_writer()
-    not_logging = False
-    while True:
-        message = await queue.get()  # Wait until a message is available
-        if start_new_log:
-            mcap_logger, writing_file = open_new_writer()
-            start_new_log = False
-            not_logging = False
-        if stop_current_log:
-            mcap_logger.finish()
-            writing_file.close()
-            not_logging = True
-            stop_current_log = False
-        if not not_logging:
-            log_sensor_data(mcap_logger, message[0], message[1])
-        queue.task_done()  # Mark the task as done
+# async def worker(queue):
+#     global start_new_log, stop_current_log
+#     mcap_logger, writing_file = open_new_writer()
+#     not_logging = False
+#     while True:
+#         message = await queue.get()  # Wait until a message is available
+#         if start_new_log:
+#             mcap_logger, writing_file = open_new_writer()
+#             start_new_log = False
+#             not_logging = False
+#         if stop_current_log:
+#             mcap_logger.finish()
+#             writing_file.close()
+#             not_logging = True
+#             stop_current_log = False
+#         if not not_logging:
+#             log_sensor_data(mcap_logger, message[0], message[1])
+#         queue.task_done()  # Mark the task as done
 
 async def main():
     signal.signal(signal.SIGINT, handle_signal)
