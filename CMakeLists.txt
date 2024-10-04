@@ -7,6 +7,7 @@ find_package(Boost REQUIRED)
 add_library(aero_logger src/aero_logger.cpp)
 add_library(aero_sensor src/aero_sensor.pb.cc)
 
+include_directories(${Boost_INCLUDE_DIRS})
 target_include_directories(aero_logger PUBLIC include)
 target_include_directories(aero_sensor PUBLIC include)
 
