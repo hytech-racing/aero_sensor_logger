@@ -55,6 +55,7 @@
         "vector": "cpp",
         "algorithm": "cpp",
         "future": "cpp",
-        "chrono": "cpp"
+        "chrono": "cpp",
+        "condition_variable": "cpp"
     }
 }

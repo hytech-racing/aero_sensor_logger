@@ -1,5 +1,6 @@
 #include "aero_sensor.ph.h"
 #include "aero_logger.hpp"
+#include "listener.hpp"
 
 #include <iostream>
 #include <mcap/mcap.hpp>
@@ -22,36 +23,16 @@ struct SensorData {
     std::array<float, 8> readings;  // Fixed array for eight 32-bit floats
 };
 
-
 bool start_new_log = false;
 bool stop_current_log = false;
 
-void log_sensor_data(mcap::McapWriter& mcap_logger, const std::vector<float>& data, const std::string& port_name) {
-    // process mcap logger message
-    aero_sensor::aero_data msg;
-    for (float reading : data) {
-        msg.add_readings_pa(reading);
-    }
-
-    // extract sensor name from port name
-    string sensor_name = port_name.substr(port_name.find_last_of("/") + 1);
-
-    mcap_logger.write_message(
-        msg.GetTypeName() + "_" + sensor_name + "_data",
-        reinterpret_cast<const std::byte*>(serialized_data.data()),
-        serialized_data.size(),
-        std::chrono::nanoseconds(log_time),
-        std::chrono::nanoseconds(log_time)
-    );
-}
-
 // implement an async function
-std::future<void> append_sensor_data(std::queue<std::pair<std::vector<float>, std::string>>& queue, const std::vector<float>& data, const std::string& port_name) {
-    // add data to queue as await
-    return std::async(std::launch::async, [&queue, &data, &port_name]() {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        queue.push(std::make_pair(data, port_name));
-        cv.notify_one();
+std::future<void> append_sensor_data(std::queue<std::pair<std::vector<float>, std::string>>& queue, const std::vector<float>& data, const std::string& port_name, std::mutex& queue_mutex, std::condition_variable& cv) {
+    // Add data to queue asynchronously
+    return std::async(std::launch::async, [&queue, &data, &port_name, &queue_mutex, &cv]() {
+        std::lock_guard<std::mutex> lock(queue_mutex);  // Lock the mutex
+        queue.push(std::make_pair(data, port_name));    // Add to the queue
+        cv.notify_one();                                 // Notify the worker thread
     });
 }
 
@@ -65,43 +46,76 @@ SensorData process_buffer(const std::vector<uint8_t>& buffer) {
     return data;
 }
 
-std::pair(mcap::McapWriter, std::ofstream) open_new_writer() {
-    std::string path_to_mcap = ".";
-    if (std::filesystem::exists("/etc/nixos")) {
-        path_to_mcap = "/home/nixos/aero_sensor_recordings";
-    }
-    auto now = std::chrono::system_clock::now();
-    // convert the now time to strftime format with m_d_y_h_m_s + .mcap
-    std::time_t end_time = std::chrono::system_clock::to_time_t(now);
-    std::string date_time_filename = std::ctime(&end_time);
-    date_time_filename = date_time_filename.substr(0, date_time_filename.length() - 1);
-    date_time_filename = date_time_filename.substr(0, date_time_filename.length() - 1) + ".mcap";
-    std::string date_time_mcap_path = std::filesystem::path(path_to_mcap) / date_time_filename;
-
-    std::ofstream writing_file(date_time_mcap_path, std::ios::binary);
-
-    return std::make_pair(mcap::McapWriter(writing_file), writing_file);
-}
-
-void cleanup(mcap::McapWriter& mcap_writer, std::ofstream& writing_file) {
-    if (mcap_writer.is_open()) {
-        std::cout << "Finalizing MCAP writer..." << std::endl;
-        mcap_writer.finalize();
-    }
-    if (writing_file.isop()) {
-        writing_file.close();
-    }
-}
-
 void handle_signal(int signal) {
     std::cout << "Received signal " << signal << ", running cleanup..." << std::endl;
-    cleanup(mcap_writer)
     std::exit(0);
 }
 
+Listener::Listener(boost::asio::io_context& io_context, const std::string& port_name)
+    : serial_port_(io_context, port_name), data_queue_(data_queue), 
+      queue_mutex_(queue_mutex), cv_(cv), logging_enabled_(true) {
+    serial_port_.set_option(boost::asio::serial_port_base::baud_rate(500000));
+}
 
+void Listener::start(std::queue<std::pair<std::vector<float>, std::string>>& data_queue,
+                     std::mutex& queue_mutex, std::condition_variable& cv) {
+    read();
+    serial_port_.write_some(boost::asio::buffer("@"));d
+    std::cout << "Successfully wrote '@'\n";
+    serial_port_.write_some(boost::asio::buffer("D"));
+    std::cout << "Successfully wrote 'D'\n";
+}
 
+void Listener::read() {
+    buffer_.resize(64);  // Adjust buffer size as needed
+    boost::asio::async_read(serial_port_, boost::asio::buffer(buffer_),
+                             boost::bind(&Listener::on_read, shared_from_this(),
+                                         boost::asio::placeholders::error,
+                                         boost::asio::placeholders::bytes_transferred));
+}
 
+void Listener::on_read(const boost::system::error_code& error, std::size_t bytes_transferred) {
+    if (!error) {
+        buffer_.resize(bytes_transferred);
+        process_buffer(buffer_);
 
+        read();
+    } else {
+        std::cerr << "Error in read: " << error.message() << std::endl;
+    }
+}
 
+void Listener::process_buffer(const std::vector<uint8_t>& buffer) {
+    if (buffer.size() < 32) {
+        return; // Not enough data
+    }
+
+    // Check if the buffer contains the delimiter '#'
+    auto hash_pos = std::find(buffer.begin(), buffer.end(), '#');
+    if (hash_pos != buffer.end()) {
+        std::vector<uint8_t> after_hash(hash_pos + 1, buffer.end());
+        if (after_hash.size() >= 46) {
+            // Extract sensor data as 8 floats
+            std::vector<float> data(8);
+            std::memcpy(data.data(), after_hash.data(), sizeof(float) * 8);
+
+            // Lock the queue and add the data
+            {
+                std::lock_guard<std::mutex> lock(queue_mutex_);
+                if (logging_enabled_) {
+                    data_queue_->emplace(data, serial_port_.name());  // Use the port name for logging
+                    cv_->notify_one();  // Notify the worker that new data is available
+
+                    append_sensor_data(*data_queue_, data, serial_port_.name());
+                }
+            }
+
+            // Update buffer
+            buffer_ = std::vector<uint8_t>(after_hash.begin() + 46, after_hash.end());
+        } else {
+            buffer_ = std::vector<uint8_t>{'#'};
+            buffer_.insert(buffer_.end(), after_hash.begin(), after_hash.end());
+        }
+    }
+}
 
